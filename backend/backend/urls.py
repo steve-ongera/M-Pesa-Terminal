@@ -8,5 +8,5 @@ urlpatterns = [
     path('api/auth/login/', LoginView.as_view(), name='login'),
     path('api/auth/logout/', LogoutView.as_view(), name='logout'),
     path('api/auth/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    path('api/', include('mpesa_app.urls')),
+    path('api/', include('mpesa.urls')),
 ]

@@ -17,7 +17,7 @@ mpesa_project/
 │   ├── mpesa_backend/         ← Django project settings
 │   │   ├── settings.py
 │   │   └── urls.py
-│   └── mpesa_app/             ← Main app
+│   └── mpesa/             ← Main app
 │       ├── models.py          ← MpesaAccount, Transaction, BlacklistedToken
 │       ├── views.py           ← All API endpoints
 │       ├── serializers.py
