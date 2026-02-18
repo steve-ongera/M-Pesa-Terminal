@@ -1,84 +1,109 @@
 /**
  * ============================================
- *   M-PESA Terminal Client (C++)
- *   Communicates with Django REST backend
+ *   M-PESA Terminal Client
+ *   Built for Dev-C++ (Windows)
  * ============================================
  *
- * Compile:  g++ -o mpesa_client mpesa_client.cpp -lcurl -std=c++17
- * Run:      ./mpesa_client
+ * HOW TO SET UP IN DEV-C++:
+ * --------------------------------------------------
+ * 1. Download libcurl for Windows (MinGW):
+ *    https://curl.se/windows/
+ *    Extract to e.g. C:\curl\
  *
- * Dependencies: libcurl-dev
- *   Ubuntu: sudo apt-get install libcurl4-openssl-dev
+ * 2. In Dev-C++ -> Tools -> Compiler Options:
+ *    Add to "Linker" tab:
+ *       -LC:\curl\lib -lcurl -lws2_32
+ *    Add to "Directories -> C++ Includes":
+ *       C:\curl\include
+ *
+ * 3. Copy curl\bin\libcurl.dll next to your .exe
+ *
+ * --------------------------------------------------
+ * BACKEND: Run Django server on localhost:8000
+ *   python manage.py runserver 0.0.0.0:8000
+ * --------------------------------------------------
  */
 
 #include <iostream>
 #include <string>
 #include <sstream>
 #include <iomanip>
-#include <limits>
 #include <cstring>
+#include <cstdlib>
+#include <windows.h>
+#include <conio.h>
 #include <curl/curl.h>
 
-// --- Config -----------------------------------------------------------------
-const std::string BASE_URL  = "http://127.0.0.1:8000";
-const std::string GREEN     = "\033[1;32m";
-const std::string RED       = "\033[1;31m";
-const std::string YELLOW    = "\033[1;33m";
-const std::string CYAN      = "\033[1;36m";
-const std::string BOLD      = "\033[1m";
-const std::string RESET     = "\033[0m";
-const std::string BLUE      = "\033[1;34m";
+using namespace std;
 
-// --- Session state -----------------------------------------------------------
+// --- Server config ------------------------------------------------------------
+const string BASE_URL = "http://127.0.0.1:8000";
+
+// --- Windows Console Colors --------------------------------------------------
+HANDLE hConsole;
+
+#define CLR_DEFAULT  7
+#define CLR_WHITE   15
+#define CLR_GREEN   10
+#define CLR_RED     12
+#define CLR_YELLOW  14
+#define CLR_CYAN    11
+
+void set_color(int color) {
+    SetConsoleTextAttribute(hConsole, color);
+}
+
+// --- Session -----------------------------------------------------------------
 struct Session {
-    std::string access_token;
-    std::string refresh_token;
-    std::string username;
-    std::string full_name;
-    std::string phone_number;
-    bool logged_in = false;
+    string access_token;
+    string refresh_token;
+    string username;
+    string full_name;
+    string phone_number;
+    bool   logged_in = false;
 };
 
 Session g_session;
 
-// --- HTTP helpers ------------------------------------------------------------
+// --- HTTP ---------------------------------------------------------------------
 struct HttpResponse {
     long   status_code;
-    std::string body;
+    string body;
 };
 
-static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* s) {
+static size_t WriteCallback(void* contents, size_t size, size_t nmemb, string* s) {
     s->append((char*)contents, size * nmemb);
     return size * nmemb;
 }
 
-HttpResponse http_post(const std::string& endpoint,
-                       const std::string& json_body,
+HttpResponse http_post(const string& endpoint,
+                       const string& json_body,
                        bool use_auth = false) {
     CURL* curl = curl_easy_init();
     HttpResponse resp{0, ""};
-    if (!curl) return resp;
+    if (!curl) { resp.body = "{\"error\":\"curl init failed\"}"; return resp; }
 
-    std::string url = BASE_URL + endpoint;
+    string url = BASE_URL + endpoint;
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
 
     if (use_auth && !g_session.access_token.empty()) {
-        std::string auth_header = "Authorization: Bearer " + g_session.access_token;
-        headers = curl_slist_append(headers, auth_header.c_str());
+        string h = "Authorization: Bearer " + g_session.access_token;
+        headers = curl_slist_append(headers, h.c_str());
     }
 
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json_body.c_str());
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_URL,            url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS,     json_body.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &resp.body);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT,        10L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-        resp.body = "{\"error\":\"Connection failed: " + std::string(curl_easy_strerror(res)) + "\"}";
-        resp.status_code = 0;
+        resp.body = "{\"error\":\"" + string(curl_easy_strerror(res)) + "\"}";
     } else {
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp.status_code);
     }
@@ -88,31 +113,32 @@ HttpResponse http_post(const std::string& endpoint,
     return resp;
 }
 
-HttpResponse http_get(const std::string& endpoint) {
+HttpResponse http_get(const string& endpoint) {
     CURL* curl = curl_easy_init();
     HttpResponse resp{0, ""};
-    if (!curl) return resp;
+    if (!curl) { resp.body = "{\"error\":\"curl init failed\"}"; return resp; }
 
-    std::string url = BASE_URL + endpoint;
+    string url = BASE_URL + endpoint;
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
 
     if (!g_session.access_token.empty()) {
-        std::string auth_header = "Authorization: Bearer " + g_session.access_token;
-        headers = curl_slist_append(headers, auth_header.c_str());
+        string h = "Authorization: Bearer " + g_session.access_token;
+        headers = curl_slist_append(headers, h.c_str());
     }
 
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp.body);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
+    curl_easy_setopt(curl, CURLOPT_URL,            url.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER,     headers);
+    curl_easy_setopt(curl, CURLOPT_HTTPGET,        1L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION,  WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA,      &resp.body);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT,        10L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 
     CURLcode res = curl_easy_perform(curl);
     if (res != CURLE_OK) {
-        resp.body = "{\"error\":\"Connection failed\"}";
-        resp.status_code = 0;
+        resp.body = "{\"error\":\"Connection failed - is the Django server running?\"}";
     } else {
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &resp.status_code);
     }
@@ -122,399 +148,407 @@ HttpResponse http_get(const std::string& endpoint) {
     return resp;
 }
 
-// --- Minimal JSON parser helpers ---------------------------------------------
-std::string extract_json_string(const std::string& json, const std::string& key) {
-    std::string search = "\"" + key + "\":\"";
+// --- JSON helper -------------------------------------------------------------
+string json_get(const string& json, const string& key) {
+    string search = "\"" + key + "\":";
     size_t pos = json.find(search);
-    if (pos == std::string::npos) return "";
+    if (pos == string::npos) return "";
     pos += search.length();
-    size_t end = json.find("\"", pos);
-    if (end == std::string::npos) return "";
-    return json.substr(pos, end - pos);
-}
-
-std::string extract_json_value(const std::string& json, const std::string& key) {
-    // For non-string values
-    std::string search = "\"" + key + "\":";
-    size_t pos = json.find(search);
-    if (pos == std::string::npos) return "";
-    pos += search.length();
-    // Skip whitespace
     while (pos < json.size() && json[pos] == ' ') pos++;
     if (pos >= json.size()) return "";
+
     if (json[pos] == '"') {
         pos++;
-        size_t end = json.find("\"", pos);
-        if (end == std::string::npos) return "";
-        return json.substr(pos, end - pos);
+        string result;
+        while (pos < json.size() && json[pos] != '"') {
+            if (json[pos] == '\\' && pos + 1 < json.size()) pos++;
+            result += json[pos++];
+        }
+        return result;
     }
-    size_t end = json.find_first_of(",}", pos);
-    if (end == std::string::npos) end = json.size();
-    return json.substr(pos, end - pos);
+    size_t end = json.find_first_of(",}\n]", pos);
+    if (end == string::npos) end = json.size();
+    string val = json.substr(pos, end - pos);
+    while (!val.empty() && (val.back() == ' ' || val.back() == '\r')) val.pop_back();
+    return val;
 }
 
 // --- UI helpers --------------------------------------------------------------
-void clear_screen() {
-    std::cout << "\033[2J\033[1;1H";
-}
+void clear_screen() { system("cls"); }
 
 void print_header() {
-    std::cout << CYAN << "\n";
-    std::cout << "  +------------------------------------------+\n";
-    std::cout << "  ¦          ?? M-PESA TERMINAL v1.0          ¦\n";
-    std::cout << "  +------------------------------------------+\n";
-    std::cout << RESET;
+    set_color(CLR_CYAN);
+    cout << "\n";
+    cout << "  +==========================================+\n";
+    cout << "  |         M-PESA TERMINAL  v1.0            |\n";
+    cout << "  |           Powered by Django API          |\n";
+    cout << "  +==========================================+\n";
+    set_color(CLR_DEFAULT);
 }
 
 void print_divider() {
-    std::cout << CYAN << "  ------------------------------------------\n" << RESET;
+    set_color(CLR_CYAN);
+    cout << "  ------------------------------------------\n";
+    set_color(CLR_DEFAULT);
 }
 
-void print_success(const std::string& msg) {
-    std::cout << GREEN << "  ? " << msg << RESET << "\n";
+void print_success(const string& msg) {
+    set_color(CLR_GREEN);  cout << "  [OK]    " << msg << "\n"; set_color(CLR_DEFAULT);
 }
-
-void print_error(const std::string& msg) {
-    std::cout << RED << "  ? " << msg << RESET << "\n";
+void print_error(const string& msg) {
+    set_color(CLR_RED);    cout << "  [ERROR] " << msg << "\n"; set_color(CLR_DEFAULT);
 }
-
-void print_info(const std::string& msg) {
-    std::cout << YELLOW << "  ? " << msg << RESET << "\n";
+void print_info(const string& msg) {
+    set_color(CLR_YELLOW); cout << "  [INFO]  " << msg << "\n"; set_color(CLR_DEFAULT);
 }
 
 void press_enter() {
-    std::cout << "\n" << CYAN << "  Press Enter to continue..." << RESET;
-    std::cin.ignore(std::numeric_limits<std::streamsize>::max(), '\n');
-    std::cin.get();
+    set_color(CLR_CYAN);
+    cout << "\n  Press Enter to continue...";
+    set_color(CLR_DEFAULT);
+    if (cin.peek() == '\n') cin.ignore();
+    cin.get();
 }
 
-std::string get_hidden_input(const std::string& prompt) {
-    std::cout << YELLOW << "  " << prompt << RESET;
-    std::string input;
-    // Hide input (works on Linux/macOS)
-    system("stty -echo");
-    std::getline(std::cin, input);
-    system("stty echo");
-    std::cout << "\n";
+string get_input(const string& prompt) {
+    set_color(CLR_YELLOW); cout << "  " << prompt;
+    set_color(CLR_WHITE);
+    string input;
+    getline(cin, input);
+    set_color(CLR_DEFAULT);
     return input;
 }
 
-std::string get_input(const std::string& prompt) {
-    std::cout << YELLOW << "  " << prompt << RESET;
-    std::string input;
-    std::getline(std::cin, input);
-    return input;
-}
-
-double get_amount(const std::string& prompt) {
-    std::cout << YELLOW << "  " << prompt << RESET;
-    std::string input;
-    std::getline(std::cin, input);
-    try {
-        double val = std::stod(input);
-        return val;
-    } catch (...) {
-        return -1.0;
+// Hidden input using _getch() — works in Dev-C++ on Windows
+string get_hidden_input(const string& prompt) {
+    set_color(CLR_YELLOW); cout << "  " << prompt;
+    set_color(CLR_WHITE);
+    string input;
+    char ch;
+    while ((ch = (char)_getch()) != '\r') {
+        if (ch == '\b') {
+            if (!input.empty()) {
+                input.pop_back();
+                cout << "\b \b";
+            }
+        } else if (ch >= 32 && ch < 127) {
+            input += ch;
+            cout << '*';
+        }
     }
+    cout << "\n";
+    set_color(CLR_DEFAULT);
+    return input;
 }
 
-// --- Feature functions -------------------------------------------------------
+double get_amount(const string& prompt) {
+    set_color(CLR_YELLOW); cout << "  " << prompt;
+    set_color(CLR_WHITE);
+    string input;
+    getline(cin, input);
+    set_color(CLR_DEFAULT);
+    if (input.empty()) return -1.0;
+    try { return stod(input); } catch (...) { return -1.0; }
+}
 
+// --- Feature: Login -----------------------------------------------------------
 void do_login() {
     clear_screen();
     print_header();
-    std::cout << BOLD << "\n  ?? LOGIN TO M-PESA\n" << RESET;
+    set_color(CLR_WHITE); cout << "\n  === LOGIN ===\n\n"; set_color(CLR_DEFAULT);
     print_divider();
 
-    std::string username = get_input("Username: ");
-    std::string password = get_hidden_input("Password: ");
+    string username = get_input("Username: ");
+    string password = get_hidden_input("Password: ");
 
     if (username.empty() || password.empty()) {
         print_error("Username and password cannot be empty.");
-        press_enter();
-        return;
+        press_enter(); return;
     }
 
-    std::cout << "\n";
-    print_info("Connecting to M-Pesa servers...");
+    cout << "\n";
+    print_info("Connecting to M-Pesa server...");
 
-    std::string body = "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}";
-    auto resp = http_post("/api/auth/login/", body);
+    string body = "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}";
+    HttpResponse resp = http_post("/api/auth/login/", body);
 
     if (resp.status_code == 0) {
-        print_error("Cannot connect to server. Make sure backend is running.");
-        press_enter();
-        return;
+        print_error("Cannot reach server. Make sure Django is running on port 8000.");
+        press_enter(); return;
     }
 
     if (resp.status_code == 200) {
-        g_session.access_token   = extract_json_value(resp.body, "access");
-        g_session.refresh_token  = extract_json_value(resp.body, "refresh");
-        g_session.username       = username;
+        g_session.access_token  = json_get(resp.body, "access");
+        g_session.refresh_token = json_get(resp.body, "refresh");
+        g_session.username      = username;
+        g_session.full_name     = json_get(resp.body, "full_name");
+        g_session.phone_number  = json_get(resp.body, "phone_number");
+        g_session.logged_in     = true;
 
-        // Extract user fields
-        g_session.full_name      = extract_json_value(resp.body, "full_name");
-        g_session.phone_number   = extract_json_value(resp.body, "phone_number");
-        g_session.logged_in      = true;
-
-        std::string display_name = g_session.full_name.empty() ? g_session.username : g_session.full_name;
-        print_success("Welcome back, " + display_name + "!");
+        string display = g_session.full_name.empty() ? g_session.username : g_session.full_name;
+        print_success("Welcome back, " + display + "!");
         print_success("Phone: " + g_session.phone_number);
     } else {
-        std::string err = extract_json_value(resp.body, "error");
-        if (err.empty()) err = "Login failed (HTTP " + std::to_string(resp.status_code) + ")";
+        string err = json_get(resp.body, "error");
+        if (err.empty()) err = "Login failed (HTTP " + to_string(resp.status_code) + ")";
         print_error(err);
     }
     press_enter();
 }
 
+// --- Feature: Logout ----------------------------------------------------------
 void do_logout() {
-    std::string body = "{\"refresh\":\"" + g_session.refresh_token + "\"}";
+    string body = "{\"refresh\":\"" + g_session.refresh_token + "\"}";
     http_post("/api/auth/logout/", body, true);
-
     g_session = Session{};
+
     clear_screen();
     print_header();
-    print_success("You have been logged out safely.");
+    print_success("You have been logged out safely. Goodbye!");
     press_enter();
 }
 
+// --- Feature: Balance ---------------------------------------------------------
 void do_check_balance() {
     clear_screen();
     print_header();
-    std::cout << BOLD << "\n  ?? M-PESA BALANCE\n" << RESET;
+    set_color(CLR_WHITE); cout << "\n  === M-PESA BALANCE ===\n\n"; set_color(CLR_DEFAULT);
     print_divider();
 
-    auto resp = http_get("/api/balance/");
+    HttpResponse resp = http_get("/api/balance/");
 
     if (resp.status_code == 0) {
         print_error("Cannot connect to server.");
-        press_enter();
-        return;
+        press_enter(); return;
     }
 
     if (resp.status_code == 200) {
-        std::string balance       = extract_json_value(resp.body, "balance");
-        std::string phone         = extract_json_value(resp.body, "phone_number");
-        std::string account_holder = extract_json_value(resp.body, "account_holder");
+        string balance = json_get(resp.body, "balance");
+        string phone   = json_get(resp.body, "phone_number");
+        string holder  = json_get(resp.body, "account_holder");
 
-        std::cout << "\n";
-        std::cout << CYAN  << "  Account Holder : " << BOLD << account_holder << RESET << "\n";
-        std::cout << CYAN  << "  Phone Number   : " << BOLD << phone << RESET << "\n";
-        std::cout << "\n";
-        std::cout << GREEN << "  +------------------------------+\n";
-        std::cout << GREEN << "  ¦  Available Balance           ¦\n";
-        std::cout << GREEN << "  ¦  KES " << BOLD << std::left << std::setw(24) << balance << GREEN << "¦\n";
-        std::cout << GREEN << "  +------------------------------+\n" << RESET;
+        cout << "\n";
+        set_color(CLR_CYAN);  cout << "  Account Holder : "; set_color(CLR_WHITE); cout << holder << "\n";
+        set_color(CLR_CYAN);  cout << "  Phone Number   : "; set_color(CLR_WHITE); cout << phone  << "\n\n";
+        set_color(CLR_GREEN);
+        cout << "  +================================+\n";
+        cout << "  |  Available Balance             |\n";
+        cout << "  |  KES "; set_color(CLR_WHITE);
+        cout << left << setw(26) << balance;
+        set_color(CLR_GREEN);
+        cout << "|\n  +================================+\n";
+        set_color(CLR_DEFAULT);
     } else {
-        std::string err = extract_json_value(resp.body, "error");
-        print_error(err.empty() ? "Failed to fetch balance" : err);
+        string err = json_get(resp.body, "error");
+        print_error(err.empty() ? "Failed to fetch balance." : err);
     }
     press_enter();
 }
 
+// --- Feature: Send Money ------------------------------------------------------
 void do_send_money() {
     clear_screen();
     print_header();
-    std::cout << BOLD << "\n  ?? SEND MONEY\n" << RESET;
+    set_color(CLR_WHITE); cout << "\n  === SEND MONEY ===\n\n"; set_color(CLR_DEFAULT);
     print_divider();
 
-    std::string recipient = get_input("Recipient Phone (e.g. 0722345678): ");
+    string recipient = get_input("Recipient Phone (e.g. 0722345678): ");
     if (recipient.empty()) { print_error("Recipient phone is required."); press_enter(); return; }
 
     double amount = get_amount("Amount (KES): ");
-    if (amount <= 0) { print_error("Invalid amount."); press_enter(); return; }
+    if (amount <= 0) { print_error("Invalid amount entered."); press_enter(); return; }
 
-    std::string desc = get_input("Description (optional): ");
-    std::string pin  = get_hidden_input("Enter M-Pesa PIN: ");
+    string desc = get_input("Description (optional, Enter to skip): ");
+    string pin  = get_hidden_input("Enter your M-Pesa PIN: ");
     if (pin.empty()) { print_error("PIN is required."); press_enter(); return; }
 
-    std::cout << "\n";
-    print_info("Processing transaction...");
+    cout << "\n"; print_info("Processing your transaction...");
 
-    std::ostringstream body;
+    ostringstream body;
     body << "{\"recipient_phone\":\"" << recipient
-         << "\",\"amount\":" << std::fixed << std::setprecision(2) << amount
-         << ",\"pin\":\"" << pin << "\""
-         << ",\"description\":\"" << desc << "\"}";
+         << "\",\"amount\":"          << fixed << setprecision(2) << amount
+         << ",\"pin\":\""             << pin << "\""
+         << ",\"description\":\""     << desc << "\"}";
 
-    auto resp = http_post("/api/send/", body.str(), true);
+    HttpResponse resp = http_post("/api/send/", body.str(), true);
 
     if (resp.status_code == 200) {
-        std::string txn_id      = extract_json_value(resp.body, "transaction_id");
-        std::string new_balance = extract_json_value(resp.body, "new_balance");
+        string txn_id  = json_get(resp.body, "transaction_id");
+        string new_bal = json_get(resp.body, "new_balance");
         print_success("Money sent successfully!");
-        std::cout << CYAN << "\n  Transaction ID : " << BOLD << txn_id << RESET << "\n";
-        std::cout << CYAN << "  Recipient      : " << BOLD << recipient << RESET << "\n";
-        std::cout << CYAN << "  Amount         : " << BOLD << "KES " << amount << RESET << "\n";
-        std::cout << CYAN << "  New Balance    : " << BOLD << "KES " << new_balance << RESET << "\n";
+        cout << "\n";
+        set_color(CLR_CYAN);  cout << "  Transaction ID : "; set_color(CLR_WHITE); cout << txn_id << "\n";
+        set_color(CLR_CYAN);  cout << "  Sent To        : "; set_color(CLR_WHITE); cout << recipient << "\n";
+        set_color(CLR_CYAN);  cout << "  Amount Sent    : "; set_color(CLR_WHITE); cout << "KES " << fixed << setprecision(2) << amount << "\n";
+        set_color(CLR_CYAN);  cout << "  New Balance    : "; set_color(CLR_GREEN); cout << "KES " << new_bal << "\n";
+        set_color(CLR_DEFAULT);
     } else {
-        std::string err = extract_json_value(resp.body, "error");
-        print_error(err.empty() ? "Transaction failed" : err);
+        string err = json_get(resp.body, "error");
+        print_error(err.empty() ? "Transaction failed." : err);
     }
     press_enter();
 }
 
+// --- Feature: Deposit ---------------------------------------------------------
 void do_deposit() {
     clear_screen();
     print_header();
-    std::cout << BOLD << "\n  ?? DEPOSIT MONEY\n" << RESET;
+    set_color(CLR_WHITE); cout << "\n  === DEPOSIT MONEY ===\n\n"; set_color(CLR_DEFAULT);
+    print_info("Simulate a cash deposit (e.g. via M-Pesa agent)");
     print_divider();
-    print_info("Simulate a deposit (e.g. from an M-Pesa agent)");
-    std::cout << "\n";
 
     double amount = get_amount("Deposit Amount (KES): ");
     if (amount <= 0) { print_error("Invalid amount."); press_enter(); return; }
 
-    std::string ref = get_input("Reference (optional): ");
+    string ref = get_input("Reference/Agent Code (optional): ");
 
-    std::cout << "\n";
-    print_info("Processing deposit...");
+    cout << "\n"; print_info("Processing deposit...");
 
-    std::ostringstream body;
-    body << "{\"amount\":" << std::fixed << std::setprecision(2) << amount
+    ostringstream body;
+    body << "{\"amount\":"       << fixed << setprecision(2) << amount
          << ",\"reference\":\"" << ref << "\"}";
 
-    auto resp = http_post("/api/deposit/", body.str(), true);
+    HttpResponse resp = http_post("/api/deposit/", body.str(), true);
 
     if (resp.status_code == 200) {
-        std::string txn_id      = extract_json_value(resp.body, "transaction_id");
-        std::string new_balance = extract_json_value(resp.body, "new_balance");
+        string txn_id  = json_get(resp.body, "transaction_id");
+        string new_bal = json_get(resp.body, "new_balance");
         print_success("Deposit successful!");
-        std::cout << CYAN << "\n  Transaction ID : " << BOLD << txn_id << RESET << "\n";
-        std::cout << CYAN << "  Amount         : " << BOLD << "KES " << amount << RESET << "\n";
-        std::cout << CYAN << "  New Balance    : " << BOLD << "KES " << new_balance << RESET << "\n";
+        cout << "\n";
+        set_color(CLR_CYAN);  cout << "  Transaction ID : "; set_color(CLR_WHITE); cout << txn_id << "\n";
+        set_color(CLR_CYAN);  cout << "  Amount         : "; set_color(CLR_WHITE); cout << "KES " << fixed << setprecision(2) << amount << "\n";
+        set_color(CLR_CYAN);  cout << "  New Balance    : "; set_color(CLR_GREEN); cout << "KES " << new_bal << "\n";
+        set_color(CLR_DEFAULT);
     } else {
-        std::string err = extract_json_value(resp.body, "error");
-        print_error(err.empty() ? "Deposit failed" : err);
+        string err = json_get(resp.body, "error");
+        print_error(err.empty() ? "Deposit failed." : err);
     }
     press_enter();
 }
 
+// --- Feature: Withdraw --------------------------------------------------------
 void do_withdraw() {
     clear_screen();
     print_header();
-    std::cout << BOLD << "\n  ?? WITHDRAW CASH\n" << RESET;
+    set_color(CLR_WHITE); cout << "\n  === WITHDRAW CASH ===\n\n"; set_color(CLR_DEFAULT);
     print_divider();
 
     double amount = get_amount("Withdrawal Amount (KES): ");
     if (amount <= 0) { print_error("Invalid amount."); press_enter(); return; }
 
-    std::string pin = get_hidden_input("Enter M-Pesa PIN: ");
+    string pin = get_hidden_input("Enter your M-Pesa PIN: ");
     if (pin.empty()) { print_error("PIN is required."); press_enter(); return; }
 
-    std::cout << "\n";
-    print_info("Processing withdrawal...");
+    cout << "\n"; print_info("Processing withdrawal...");
 
-    std::ostringstream body;
-    body << "{\"amount\":" << std::fixed << std::setprecision(2) << amount
-         << ",\"pin\":\"" << pin << "\""
+    ostringstream body;
+    body << "{\"amount\":"     << fixed << setprecision(2) << amount
+         << ",\"pin\":\""      << pin << "\""
          << ",\"description\":\"Cash withdrawal\"}";
 
-    auto resp = http_post("/api/withdraw/", body.str(), true);
+    HttpResponse resp = http_post("/api/withdraw/", body.str(), true);
 
     if (resp.status_code == 200) {
-        std::string txn_id      = extract_json_value(resp.body, "transaction_id");
-        std::string new_balance = extract_json_value(resp.body, "new_balance");
+        string txn_id  = json_get(resp.body, "transaction_id");
+        string new_bal = json_get(resp.body, "new_balance");
         print_success("Withdrawal successful!");
-        std::cout << CYAN << "\n  Transaction ID : " << BOLD << txn_id << RESET << "\n";
-        std::cout << CYAN << "  Amount         : " << BOLD << "KES " << amount << RESET << "\n";
-        std::cout << CYAN << "  New Balance    : " << BOLD << "KES " << new_balance << RESET << "\n";
+        cout << "\n";
+        set_color(CLR_CYAN);  cout << "  Transaction ID : "; set_color(CLR_WHITE); cout << txn_id << "\n";
+        set_color(CLR_CYAN);  cout << "  Amount         : "; set_color(CLR_WHITE); cout << "KES " << fixed << setprecision(2) << amount << "\n";
+        set_color(CLR_CYAN);  cout << "  New Balance    : "; set_color(CLR_GREEN); cout << "KES " << new_bal << "\n";
+        set_color(CLR_DEFAULT);
     } else {
-        std::string err = extract_json_value(resp.body, "error");
-        print_error(err.empty() ? "Withdrawal failed" : err);
+        string err = json_get(resp.body, "error");
+        print_error(err.empty() ? "Withdrawal failed." : err);
     }
     press_enter();
 }
 
+// --- Feature: Transaction History --------------------------------------------
 void do_transaction_history() {
     clear_screen();
     print_header();
-    std::cout << BOLD << "\n  ?? TRANSACTION HISTORY\n" << RESET;
+    set_color(CLR_WHITE); cout << "\n  === TRANSACTION HISTORY (Last 10) ===\n\n"; set_color(CLR_DEFAULT);
     print_divider();
 
-    auto resp = http_get("/api/transactions/?limit=10");
+    HttpResponse resp = http_get("/api/transactions/?limit=10");
 
-    if (resp.status_code == 200) {
-        // Simple extraction - parse transactions array
-        size_t txn_start = resp.body.find("\"transactions\":");
-        if (txn_start == std::string::npos) {
-            print_info("No transactions found.");
-            press_enter();
-            return;
-        }
-
-        // Count and show raw info - simplified display
-        std::string count_str = extract_json_value(resp.body, "count");
-        std::cout << CYAN << "  Total transactions: " << BOLD << count_str << RESET << "\n\n";
-
-        // Parse individual transactions
-        std::string body_str = resp.body;
-        size_t pos = 0;
-        int shown = 0;
-
-        while (shown < 10) {
-            size_t type_pos = body_str.find("\"transaction_type\"", pos);
-            if (type_pos == std::string::npos) break;
-
-            // Extract fields
-            std::string sub = body_str.substr(type_pos, 400);
-
-            std::string t_type   = extract_json_value(sub, "transaction_type");
-            std::string t_amount = extract_json_value(sub, "amount");
-            std::string t_status = extract_json_value(sub, "status");
-            std::string t_id     = extract_json_value(sub, "transaction_id");
-            std::string t_date   = extract_json_value(sub, "created_at");
-            std::string t_bal_af = extract_json_value(sub, "balance_after");
-
-            // Color code by type
-            std::string color = RESET;
-            std::string icon  = "•";
-            if (t_type == "SEND")     { color = RED;   icon = "?"; }
-            if (t_type == "RECEIVE")  { color = GREEN; icon = "?"; }
-            if (t_type == "DEPOSIT")  { color = GREEN; icon = "+"; }
-            if (t_type == "WITHDRAW") { color = RED;   icon = "-"; }
-
-            std::cout << color << "  " << icon << " " << BOLD << std::left << std::setw(8) << t_type << RESET;
-            std::cout << CYAN  << " KES " << std::setw(12) << t_amount;
-            std::cout << RESET << " Bal: " << std::setw(10) << t_bal_af;
-            std::cout << YELLOW << " " << t_id << RESET << "\n";
-
-            pos = type_pos + 1;
-            shown++;
-        }
-
-        if (shown == 0) {
-            print_info("No transactions yet.");
-        }
-    } else {
-        print_error("Failed to fetch transaction history.");
+    if (resp.status_code != 200) {
+        print_error("Failed to fetch transactions.");
+        press_enter(); return;
     }
+
+    string count_str = json_get(resp.body, "count");
+    set_color(CLR_CYAN); cout << "  Total recorded: "; set_color(CLR_WHITE); cout << count_str << "\n\n";
+
+    // Table header
+    set_color(CLR_YELLOW);
+    cout << "  " << left
+         << setw(10) << "TYPE"
+         << setw(14) << "AMOUNT(KES)"
+         << setw(14) << "BAL AFTER"
+         << "TRANSACTION ID\n";
+    set_color(CLR_CYAN);
+    cout << "  " << string(58, '-') << "\n";
+    set_color(CLR_DEFAULT);
+
+    string body_str = resp.body;
+    size_t pos = 0;
+    int shown = 0;
+
+    while (shown < 10) {
+        size_t type_pos = body_str.find("\"transaction_type\"", pos);
+        if (type_pos == string::npos) break;
+
+        string sub     = body_str.substr(type_pos, 500);
+        string t_type  = json_get(sub, "transaction_type");
+        string t_amt   = json_get(sub, "amount");
+        string t_bal   = json_get(sub, "balance_after");
+        string t_id    = json_get(sub, "transaction_id");
+
+        if (t_type == "SEND" || t_type == "WITHDRAW")
+            set_color(CLR_RED);
+        else
+            set_color(CLR_GREEN);
+
+        cout << "  " << left
+             << setw(10) << t_type
+             << setw(14) << t_amt
+             << setw(14) << t_bal
+             << t_id << "\n";
+
+        set_color(CLR_DEFAULT);
+        pos = type_pos + 1;
+        shown++;
+    }
+
+    if (shown == 0) print_info("No transactions on record yet.");
     press_enter();
 }
 
-// --- Menus -------------------------------------------------------------------
-
+// --- Main Menu (after login) --------------------------------------------------
 void show_main_menu() {
     while (true) {
         clear_screen();
         print_header();
 
-        std::cout << CYAN << "\n  Logged in as: " << BOLD << g_session.full_name;
-        if (g_session.full_name.empty()) std::cout << g_session.username;
-        std::cout << RESET << CYAN << "  [" << g_session.phone_number << "]\n\n" << RESET;
+        set_color(CLR_CYAN); cout << "\n  Logged in: ";
+        set_color(CLR_WHITE);
+        string display = g_session.full_name.empty() ? g_session.username : g_session.full_name;
+        cout << display << "  [" << g_session.phone_number << "]\n\n";
+        set_color(CLR_DEFAULT);
 
-        std::cout << BOLD << "  MAIN MENU\n" << RESET;
+        set_color(CLR_WHITE); cout << "  MAIN MENU\n"; set_color(CLR_DEFAULT);
         print_divider();
-        std::cout << "  [1] ?? Check Balance\n";
-        std::cout << "  [2] ?? Send Money\n";
-        std::cout << "  [3] ?? Deposit\n";
-        std::cout << "  [4] ?? Withdraw\n";
-        std::cout << "  [5] ?? Transaction History\n";
-        std::cout << "  [6] ?? Logout\n";
+        cout << "  [1]  Check Balance\n";
+        cout << "  [2]  Send Money\n";
+        cout << "  [3]  Deposit\n";
+        cout << "  [4]  Withdraw\n";
+        cout << "  [5]  Transaction History\n";
+        cout << "  [6]  Logout\n";
         print_divider();
 
-        std::string choice = get_input("Select option (1-6): ");
+        string choice = get_input("Select option (1-6): ");
 
         if      (choice == "1") do_check_balance();
         else if (choice == "2") do_send_money();
@@ -522,45 +556,52 @@ void show_main_menu() {
         else if (choice == "4") do_withdraw();
         else if (choice == "5") do_transaction_history();
         else if (choice == "6") { do_logout(); break; }
-        else { print_error("Invalid option. Try again."); press_enter(); }
-    }
-}
-
-void show_welcome_menu() {
-    while (true) {
-        clear_screen();
-        print_header();
-
-        std::cout << "\n  " << CYAN << "Welcome to M-Pesa Terminal" << RESET << "\n";
-        std::cout << "  The fastest way to manage your money.\n\n";
-        print_divider();
-        std::cout << "  [1] ?? Login\n";
-        std::cout << "  [0] ? Exit\n";
-        print_divider();
-
-        std::string choice = get_input("Select option: ");
-
-        if (choice == "1") {
-            do_login();
-            if (g_session.logged_in) {
-                show_main_menu();
-            }
-        } else if (choice == "0") {
-            clear_screen();
-            print_header();
-            std::cout << "\n  " << GREEN << "Thank you for using M-Pesa Terminal!" << RESET << "\n\n";
-            break;
-        } else {
-            print_error("Invalid option.");
+        else {
+            print_error("Invalid option. Please choose 1 to 6.");
             press_enter();
         }
     }
 }
 
-// --- Entry point -------------------------------------------------------------
+// --- Welcome Screen -----------------------------------------------------------
+void show_welcome_menu() {
+    while (true) {
+        clear_screen();
+        print_header();
+
+        set_color(CLR_CYAN);  cout << "\n  Welcome to M-Pesa Terminal\n";
+        set_color(CLR_DEFAULT); cout << "  Manage your M-Pesa account from your terminal.\n\n";
+        print_divider();
+        cout << "  [1]  Login\n";
+        cout << "  [0]  Exit\n";
+        print_divider();
+
+        string choice = get_input("Select option: ");
+
+        if (choice == "1") {
+            do_login();
+            if (g_session.logged_in) show_main_menu();
+        } else if (choice == "0") {
+            clear_screen();
+            print_header();
+            set_color(CLR_GREEN); cout << "\n  Thank you for using M-Pesa Terminal!\n\n";
+            set_color(CLR_DEFAULT);
+            break;
+        } else {
+            print_error("Invalid option. Press 1 to login or 0 to exit.");
+            press_enter();
+        }
+    }
+}
+
+// --- Entry Point --------------------------------------------------------------
 int main() {
+    hConsole = GetStdHandle(STD_OUTPUT_HANDLE);
+    SetConsoleOutputCP(CP_UTF8);
     curl_global_init(CURL_GLOBAL_DEFAULT);
+
     show_welcome_menu();
+
     curl_global_cleanup();
     return 0;
 }
